@@ -37,3 +37,6 @@ jobs:
             esac
             gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/assets/$id" -f name="$new" --jq '.name'
           done
+          # upstream marks the release prerelease, which hides it from /releases/latest
+          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/$REL" \
+            -F prerelease=false -F make_latest='true' >/dev/null

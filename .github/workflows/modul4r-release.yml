@@ -1,6 +1,9 @@
 name: RemoteAccess release
 
 on:
+  schedule:
+    # 03:00 UTC Monday = Sunday night in North America (CDT 22:00 / CST 20:00)
+    - cron: "0 3 * * 1"
   workflow_dispatch:
     inputs:
       tag:
@@ -28,7 +31,7 @@ env:
   FLUTTER_WINDOWS_ARM_VERSION: "3.44.9"
   # for arm64 linux because official Dart SDK does not work
   FLUTTER_ELINUX_VERSION: "3.16.9"
-  TAG_NAME: ${{ inputs.tag }}
+  TAG_NAME: ${{ inputs.tag || '1.5.0-remote1' }}
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
   # vcpkg version: 2026.07.29
   # If we change the `VCPKG COMMIT_ID`, please remember:
@@ -412,14 +415,102 @@ jobs:
             ./SignOutput/rustdesk-*.msi
             ./SignOutput/rustdesk-*.exe
 
+  # Builds on Marcello's Mac via a self-hosted runner — zero Actions minutes.
+  build-for-macos-local:
+    name: macos-local (aarch64-apple-darwin)
+    needs: [generate-bridge]
+    runs-on: [self-hosted, macOS, arm64]
+    env:
+      VCPKG_TRIPLET: arm64-osx
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          submodules: recursive
+
+      - name: Export GitHub Actions cache environment variables
+        uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410 # v6
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Install build runtime
+        run: |
+          brew install llvm create-dmg pkg-config
+          # NASM 2.16.x (brew's 3.x is incompatible); install into ~/.local without sudo
+          NASM_DIR="$HOME/.local/nasm-2.16.03"
+          if [ ! -x "$NASM_DIR/nasm" ]; then
+            mkdir -p "$NASM_DIR" /tmp/nasm-dl
+            curl -L https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/macosx/nasm-2.16.03-macosx.zip -o /tmp/nasm-dl/nasm.zip
+            unzip -o /tmp/nasm-dl/nasm.zip -d /tmp/nasm-dl
+            cp /tmp/nasm-dl/nasm-2.16.03/nasm "$NASM_DIR/nasm"
+          fi
+          echo "$NASM_DIR" >> "$GITHUB_PATH"
+
+      - name: Install flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: "stable"
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+
+      - name: Patch flutter
+        run: |
+          cd $(dirname $(dirname $(which flutter)))
+          git apply ${{ github.workspace }}/.github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff
+          # https://github.com/flutter/flutter/issues/133533
+          sed -i -e 's/_setFramesEnabledState(false);/\/\/_setFramesEnabledState(false);/g' ../packages/flutter/lib/src/scheduler/binding.dart
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: ${{ env.MAC_RUST_VERSION }}
+          targets: aarch64-apple-darwin
+          components: "rustfmt"
+
+      - name: Restore bridge files
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bridge-artifact
+          path: ./
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
+        with:
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: false
+
+      - name: Install vcpkg dependencies
+        run: $VCPKG_ROOT/vcpkg install --x-install-root="$VCPKG_ROOT/installed"
+
+      - name: Build rustdesk
+        run: ./build.py --flutter --hwcodec --unix-file-copy-paste --screencapturekit
+
+      - name: Package unsigned dmg
+        run: |
+          CREATE_DMG="$(readlink -f "$(command -v create-dmg)")"
+          sed -i -e 's/MAXIMUM_UNMOUNTING_ATTEMPTS=3/MAXIMUM_UNMOUNTING_ATTEMPTS=7/' "$CREATE_DMG"
+          create-dmg --icon "RustDesk.app" 200 190 --hide-extension "RustDesk.app" \
+            --window-size 800 400 --app-drop-link 600 185 \
+            rustdesk-${{ env.VERSION }}-aarch64.dmg \
+            ./flutter/build/macos/Build/Products/Release/RustDesk.app
+
+      - name: Upload dmg to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || '1.5.0-remote1' }}
+        run: |
+          mv rustdesk-${{ env.VERSION }}-aarch64.dmg RemoteAccess-${{ env.VERSION }}-macos-arm64.dmg
+          gh release upload "$TAG" RemoteAccess-${{ env.VERSION }}-macos-arm64.dmg --clobber -R "$GITHUB_REPOSITORY"
+
   rename:
-    needs: build-for-windows-flutter
+    needs: [build-for-windows-flutter, build-for-macos-local]
     runs-on: ubuntu-latest
     steps:
       - name: Rename release assets to RemoteAccess-*
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ inputs.tag }}
+          TAG: ${{ inputs.tag || '1.5.0-remote1' }}
         run: |
           set -e
           REL=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$TAG" --jq '.id')

@@ -456,10 +456,13 @@ jobs:
 
       - name: Patch flutter
         run: |
-          cd $(dirname $(dirname $(which flutter)))
-          git apply ${{ github.workspace }}/.github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff
+          cd "$(dirname "$(dirname "$(which flutter)")")"
+          git apply ${{ github.workspace }}/.github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff || echo "dropdown patch already applied"
           # https://github.com/flutter/flutter/issues/133533
-          sed -i -e 's/_setFramesEnabledState(false);/\/\/_setFramesEnabledState(false);/g' ../packages/flutter/lib/src/scheduler/binding.dart
+          F=packages/flutter/lib/src/scheduler/binding.dart
+          if grep -q '_setFramesEnabledState(false);' "$F"; then
+            sed -i -e 's/_setFramesEnabledState(false);/\/\/_setFramesEnabledState(false);/g' "$F"
+          fi
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1

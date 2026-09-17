@@ -489,6 +489,14 @@ jobs:
       - name: Build rustdesk
         run: ./build.py --flutter --hwcodec --unix-file-copy-paste --screencapturekit
 
+      - name: Ad-hoc sign app bundle
+        # Without a signature (even ad-hoc), the dmg copy refuses to load
+        # frameworks on first launch.
+        run: |
+          APP=./flutter/build/macos/Build/Products/Release/RustDesk.app
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep "$APP"
+
       - name: Package unsigned dmg
         # create-dmg drives Finder via AppleScript, which times out on the headless
         # runner; hdiutil is headless-safe.

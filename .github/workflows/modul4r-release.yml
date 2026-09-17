@@ -529,6 +529,12 @@ jobs:
               rustdesk-*) new="RemoteAccess-${name#rustdesk-}" ;;
               *) continue ;;
             esac
+            # GitHub rejects a rename onto an occupied name (422 already_exists),
+            # e.g. a stale asset from a previous run; delete the old one first.
+            gh api "repos/${GITHUB_REPOSITORY}/releases/$REL" --jq '.assets[].name' \
+              | grep -Fqx "$new" \
+              && gh api "repos/${GITHUB_REPOSITORY}/releases/$REL" --jq ".assets[] | select(.name==\"$new\") | .id" \
+                 | xargs -r -I{} gh api -X DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/{}"
             gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/assets/$id" -f name="$new" --jq '.name'
           done
           # upstream marks the release prerelease, which hides it from /releases/latest

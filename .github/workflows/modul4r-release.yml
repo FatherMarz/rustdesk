@@ -494,6 +494,11 @@ jobs:
         # frameworks on first launch.
         run: |
           APP=./flutter/build/macos/Build/Products/Release/RustDesk.app
+          # The dmg shows the bundle folder name in Finder; ship it as RemoteAccess.
+          # Signature covers CFBundleIdentifier, not the folder name, so renaming
+          # before signing is safe.
+          mv "$APP" ./flutter/build/macos/Build/Products/Release/RemoteAccess.app
+          APP=./flutter/build/macos/Build/Products/Release/RemoteAccess.app
           codesign --force --deep --sign - "$APP"
           codesign --verify --deep "$APP"
 
@@ -502,7 +507,7 @@ jobs:
         # runner; hdiutil is headless-safe.
         run: |
           hdiutil create -volname RemoteAccess \
-            -srcfolder ./flutter/build/macos/Build/Products/Release/RustDesk.app \
+            -srcfolder ./flutter/build/macos/Build/Products/Release/RemoteAccess.app \
             -format UDZO -o rustdesk-${{ env.VERSION }}-aarch64.dmg
 
       - name: Upload dmg to release

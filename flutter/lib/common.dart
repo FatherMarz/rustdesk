@@ -1610,7 +1610,11 @@ String translate(String name) {
   if (name.startsWith('Failed to') && name.contains(': ')) {
     return name.split(': ').map((x) => translate(x)).join(': ');
   }
-  return platformFFI.translate(name, localeName);
+  // RemoteAccess rebrand: upstream translation strings say "RustDesk"; swap
+  // the product name in whatever string comes back (key or value).
+  return platformFFI
+      .translate(name, localeName)
+      .replaceAll('RustDesk', 'RemoteAccess');
 }
 
 // This function must be kept the same as the one in rust and sciter code.

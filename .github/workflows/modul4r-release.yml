@@ -490,13 +490,12 @@ jobs:
         run: ./build.py --flutter --hwcodec --unix-file-copy-paste --screencapturekit
 
       - name: Package unsigned dmg
+        # create-dmg drives Finder via AppleScript, which times out on the headless
+        # runner; hdiutil is headless-safe.
         run: |
-          CREATE_DMG="$(readlink -f "$(command -v create-dmg)")"
-          sed -i -e 's/MAXIMUM_UNMOUNTING_ATTEMPTS=3/MAXIMUM_UNMOUNTING_ATTEMPTS=7/' "$CREATE_DMG"
-          create-dmg --icon "RustDesk.app" 200 190 --hide-extension "RustDesk.app" \
-            --window-size 800 400 --app-drop-link 600 185 \
-            rustdesk-${{ env.VERSION }}-aarch64.dmg \
-            ./flutter/build/macos/Build/Products/Release/RustDesk.app
+          hdiutil create -volname RemoteAccess \
+            -srcfolder ./flutter/build/macos/Build/Products/Release/RustDesk.app \
+            -format UDZO -o rustdesk-${{ env.VERSION }}-aarch64.dmg
 
       - name: Upload dmg to release
         env:

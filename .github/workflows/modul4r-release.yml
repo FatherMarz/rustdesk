@@ -345,7 +345,7 @@ jobs:
           pushd ./res/msi
           # The exe must match the branded app name so preprocess.py finds it and
           # names the product/shortcuts RemoteAccess instead of defaulting to RustDesk.
-          mv ../rustdesk/rustdesk.exe ../rustdesk/RemoteAccess.exe
+          mv ../../rustdesk/rustdesk.exe ../../rustdesk/RemoteAccess.exe
           python preprocess.py --arp -d ../../rustdesk --app-name RemoteAccess
           nuget restore msi.sln
           $msiPlatform = if ('${{ matrix.job.arch }}' -eq 'aarch64') { 'ARM64' } else { 'x64' }

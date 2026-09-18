@@ -342,10 +342,10 @@ jobs:
         # is x64 / ARM64; the produced Package.msi is globbed since its bin/<platform>/ dir varies.
         if: env.UPLOAD_ARTIFACT == 'true'
         run: |
+          pushd ./res/msi
           # The exe must match the branded app name so preprocess.py finds it and
           # names the product/shortcuts RemoteAccess instead of defaulting to RustDesk.
-          mv ../../rustdesk/rustdesk.exe ../../rustdesk/RemoteAccess.exe
-          pushd ./res/msi
+          mv ../rustdesk/rustdesk.exe ../rustdesk/RemoteAccess.exe
           python preprocess.py --arp -d ../../rustdesk --app-name RemoteAccess
           nuget restore msi.sln
           $msiPlatform = if ('${{ matrix.job.arch }}' -eq 'aarch64') { 'ARM64' } else { 'x64' }
@@ -520,6 +520,9 @@ jobs:
           TAG: ${{ inputs.tag || '1.5.0-remote1' }}
         run: |
           mv rustdesk-${{ env.VERSION }}-aarch64.dmg RemoteAccess-${{ env.VERSION }}-macos-arm64.dmg
+          # This job can finish before the Windows job publishes the release; create it if missing.
+          gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create "$TAG" --prerelease --title "$TAG" -R "$GITHUB_REPOSITORY"
           gh release upload "$TAG" RemoteAccess-${{ env.VERSION }}-macos-arm64.dmg --clobber -R "$GITHUB_REPOSITORY"
 
   rename:

@@ -1,10 +1,11 @@
 name: modul4r sync + patch
 
 # Keeps the fork current with upstream and re-applies our tiny patch:
-#  1. hbb_common: rebase our 1-commit patch (default server + key) onto
-#     upstream/main, force-push the modul4r branch.
-#  2. rustdesk: point the submodule gitlink at the new hbb_common head,
-#     merge upstream/master into modul4r, push.
+#  1. hbb_common: its own workflow (FatherMarz/hbb_common, modul4r branch)
+#     rebases our patch (default server + key) onto upstream/main and
+#     force-pushes the modul4r branch at 09:00 UTC on Mondays.
+#  2. rustdesk (this job, 09:17 UTC): point the submodule gitlink at the new
+#     hbb_common head, merge upstream/master into modul4r, push.
 # A merge conflict fails the run loudly instead of shipping something stale.
 
 on:
@@ -19,27 +20,24 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - name: Sync hbb_common patch
+      - uses: actions/checkout@v4
+        with:
+          ref: modul4r
+          fetch-depth: 0
+          submodules: false
+
+      - name: Read the synced hbb_common head
         run: |
-          git clone -b modul4r https://github.com/FatherMarz/hbb_common.git hbc
-          cd hbc
-          git config user.name "modul4r-sync"
-          git config user.email "marcello@modul4r.com"
-          git remote add upstream https://github.com/rustdesk/hbb_common.git
-          git fetch upstream main
-          git rebase upstream/main || { echo "::error::hbb_common patch conflict — rebase modul4r by hand"; exit 1; }
-          git push -f origin modul4r
-          echo "HBB_HEAD=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          HBB_HEAD=$(git ls-remote https://github.com/FatherMarz/hbb_common.git refs/heads/modul4r | cut -f1)
+          test -n "$HBB_HEAD" || { echo "::error::could not read the hbb_common modul4r head"; exit 1; }
+          echo "HBB_HEAD=$HBB_HEAD" >> "$GITHUB_ENV"
 
       - name: Sync rustdesk fork
         run: |
-          cd "$GITHUB_WORKSPACE"
           git config user.name "modul4r-sync"
           git config user.email "marcello@modul4r.com"
-          git fetch origin modul4r
-          git checkout modul4r
           git remote add upstream https://github.com/rustdesk/rustdesk.git
-          git fetch upstream master --depth=200
+          git fetch upstream master
           git merge upstream/master --no-edit || { echo "::error::rustdesk merge conflict — resolve by hand"; exit 1; }
           git update-index --cacheinfo 160000,"$HBB_HEAD",libs/hbb_common
           git commit -m "modul4r: bump hbb_common to $HBB_HEAD" || echo "submodule unchanged"

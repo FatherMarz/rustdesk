@@ -21,7 +21,7 @@ jobs:
     steps:
       - name: Sync hbb_common patch
         run: |
-          git clone https://github.com/FatherMarz/hbb_common.git hbc
+          git clone -b modul4r https://github.com/FatherMarz/hbb_common.git hbc
           cd hbc
           git config user.name "modul4r-sync"
           git config user.email "marcello@modul4r.com"

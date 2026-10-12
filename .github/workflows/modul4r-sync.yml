@@ -14,17 +14,20 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
+      # The job token may not push upstream's workflow-file changes, so the
+      # push goes over SSH with a write deploy key scoped to this repo.
       - uses: actions/checkout@v4
         with:
           ref: modul4r
           fetch-depth: 0
           submodules: false
+          ssh-key: ${{ secrets.MODUL4R_SYNC_DEPLOY_KEY }}
 
       - name: Read the synced hbb_common head
         run: |

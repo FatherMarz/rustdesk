@@ -38,7 +38,19 @@ jobs:
           git config user.email "marcello@modul4r.com"
           git remote add upstream https://github.com/rustdesk/rustdesk.git
           git fetch upstream master
-          git merge upstream/master --no-edit || { echo "::error::rustdesk merge conflict — resolve by hand"; exit 1; }
+          # Both sides move the hbb_common gitlink every week, so that one
+          # conflict is expected and resolves to the synced head. Anything
+          # else is a real conflict and fails the run.
+          git merge upstream/master --no-edit || {
+            conflicts=$(git diff --name-only --diff-filter=U)
+            if [ "$conflicts" != "libs/hbb_common" ]; then
+              echo "::error::rustdesk merge conflict — resolve by hand"
+              git status --short | head -20
+              exit 1
+            fi
+            git update-index --cacheinfo 160000,"$HBB_HEAD",libs/hbb_common
+            git commit --no-edit
+          }
           git update-index --cacheinfo 160000,"$HBB_HEAD",libs/hbb_common
           git commit -m "modul4r: bump hbb_common to $HBB_HEAD" || echo "submodule unchanged"
           git push origin modul4r

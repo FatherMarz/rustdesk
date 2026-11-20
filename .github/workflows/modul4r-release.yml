@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g. 1.5.0-remote1)"
+        description: "Release tag (e.g. 1.5.0-remote3)"
         required: true
-        default: "1.5.0-remote1"
+        default: "1.5.0-remote3"
 
 permissions:
   contents: write
@@ -31,7 +31,7 @@ env:
   FLUTTER_WINDOWS_ARM_VERSION: "3.44.9"
   # for arm64 linux because official Dart SDK does not work
   FLUTTER_ELINUX_VERSION: "3.16.9"
-  TAG_NAME: ${{ inputs.tag || '1.5.0-remote1' }}
+  TAG_NAME: ${{ inputs.tag || '1.5.0-remote3' }}
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
   # vcpkg version: 2026.07.29
   # If we change the `VCPKG COMMIT_ID`, please remember:
@@ -278,6 +278,18 @@ jobs:
               Write-Host "Ingore the printer driver error."
           }
 
+      - name: Sign app files (Azure Artifact Signing)
+        # Signed before packing, so the portable exe and the MSI carry signed
+        # files. rustdesk.exe becomes RemoteAccess.exe in the MSI; a rename
+        # keeps the signature.
+        if: env.UPLOAD_ARTIFACT == 'true'
+        shell: bash
+        env:
+          AZURE_SIGNING_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
+          AZURE_SIGNING_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
+          AZURE_SIGNING_CLIENT_SECRET: ${{ secrets.AZURE_SIGNING_CLIENT_SECRET }}
+        run: bash .github/modul4r/sign-win.sh ./rustdesk/rustdesk.exe ./rustdesk/librustdesk.dll
+
       - name: find Runner.res
         # Windows: find Runner.res (compiled from ./flutter/windows/runner/Runner.rc), copy to ./Runner.res
         # Runner.rc does not contain actual version, but Runner.res does
@@ -353,6 +365,26 @@ jobs:
           $msi = Get-ChildItem ./Package/bin/*/Release/en-us/Package.msi | Select-Object -First 1
           mv $msi.FullName ../../SignOutput/rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.msi
           sha256sum ../../SignOutput/rustdesk-*.msi
+
+      - name: Sign the installer and portable exe (Azure Artifact Signing)
+        if: env.UPLOAD_ARTIFACT == 'true'
+        shell: bash
+        env:
+          AZURE_SIGNING_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
+          AZURE_SIGNING_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
+          AZURE_SIGNING_CLIENT_SECRET: ${{ secrets.AZURE_SIGNING_CLIENT_SECRET }}
+        run: bash .github/modul4r/sign-win.sh ./SignOutput/rustdesk-*.msi ./SignOutput/rustdesk-*.exe
+
+      - name: Check every Windows signature
+        if: env.UPLOAD_ARTIFACT == 'true'
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem ./SignOutput/rustdesk-*.msi, ./SignOutput/rustdesk-*.exe) + @(Get-Item ./rustdesk/RemoteAccess.exe, ./rustdesk/librustdesk.dll)
+          foreach ($f in $files) {
+            $s = Get-AuthenticodeSignature $f.FullName
+            Write-Host "$($f.Name): $($s.Status) $($s.SignerCertificate.Subject)"
+            if ($s.Status -ne 'Valid') { Write-Error "$($f.Name) is not signed"; exit 1 }
+          }
 
       - name: Build pre-built MSI template
         # Two things this works around: preprocess.py rewrites res/msi in place, so the
@@ -493,9 +525,10 @@ jobs:
       - name: Build rustdesk
         run: ./build.py --flutter --hwcodec --unix-file-copy-paste --screencapturekit
 
-      - name: Ad-hoc sign app bundle
-        # Without a signature (even ad-hoc), the dmg copy refuses to load
-        # frameworks on first launch.
+      - name: Sign app bundle with the Developer ID
+        # The Developer ID in the login keychain of this Mac (the self-hosted
+        # runner), with upstream's signing script: hardened runtime, timestamp
+        # and the app's own entitlements.
         run: |
           APP=./flutter/build/macos/Build/Products/Release/RustDesk.app
           # The dmg shows the bundle folder name in Finder; ship it as RemoteAccess.
@@ -503,21 +536,31 @@ jobs:
           # before signing is safe.
           mv "$APP" ./flutter/build/macos/Build/Products/Release/RemoteAccess.app
           APP=./flutter/build/macos/Build/Products/Release/RemoteAccess.app
-          codesign --force --deep --sign - "$APP"
-          codesign --verify --deep "$APP"
+          bash ./.github/scripts/sign-macos-app.sh "$APP" \
+            "Developer ID Application: Marcello Delcaro (KDLKFK58UU)" \
+            ./flutter/macos/Runner/Release.entitlements
 
-      - name: Package unsigned dmg
+      - name: Package, sign and notarize the dmg
         # create-dmg drives Finder via AppleScript, which times out on the headless
-        # runner; hdiutil is headless-safe.
+        # runner; hdiutil is headless-safe. Notarizing uses the "vigilance"
+        # notarytool profile in this Mac's keychain.
         run: |
+          DMG=rustdesk-${{ env.VERSION }}-aarch64.dmg
+          rm -f "$DMG"
           hdiutil create -volname RemoteAccess \
             -srcfolder ./flutter/build/macos/Build/Products/Release/RemoteAccess.app \
-            -format UDZO -o rustdesk-${{ env.VERSION }}-aarch64.dmg
+            -format UDZO -o "$DMG"
+          codesign --force --timestamp --sign "Developer ID Application: Marcello Delcaro (KDLKFK58UU)" "$DMG"
+          xcrun notarytool submit "$DMG" --keychain-profile vigilance --wait | tee notary.txt
+          # An "Invalid" verdict can still exit 0.
+          grep -q "status: Accepted" notary.txt || { id=$(awk '/^  id:/{print $2; exit}' notary.txt); xcrun notarytool log "$id" --keychain-profile vigilance || true; exit 1; }
+          xcrun stapler staple "$DMG"
+          spctl -a -t open --context context:primary-signature -v "$DMG"
 
       - name: Upload dmg to release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ inputs.tag || '1.5.0-remote1' }}
+          TAG: ${{ inputs.tag || '1.5.0-remote3' }}
         run: |
           mv rustdesk-${{ env.VERSION }}-aarch64.dmg RemoteAccess-${{ env.VERSION }}-macos-arm64.dmg
           # This job can finish before the Windows job publishes the release; create it if missing.
@@ -527,12 +570,14 @@ jobs:
 
   rename:
     needs: [build-for-windows-flutter, build-for-macos-local]
+    # A Mac failure must not keep the fixed Windows installer off the site.
+    if: ${{ !cancelled() && needs.build-for-windows-flutter.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Rename release assets to RemoteAccess-*
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ inputs.tag || '1.5.0-remote1' }}
+          TAG: ${{ inputs.tag || '1.5.0-remote3' }}
         run: |
           set -e
           REL=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$TAG" --jq '.id')
